@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow } from "electron";
 import type { WebContents } from "electron";
 import type { Surface } from "pixel-react";
 import type { DevtoolsDock } from "pixel-store";
@@ -29,10 +29,6 @@ export class DevtoolsWindow {
   private pendingPanel: string | null = null;
   cursorShape = "default";
   onCursorChange: ((shape: string) => void) | null = null;
-  private readonly onDisplayChange = () => {
-    if (this.destroyed) return;
-    this.window.webContents.setFrameRate(this.visible ? frameRate() : 4);
-  };
 
   constructor(
     pageContents: WebContents,
@@ -77,12 +73,9 @@ export class DevtoolsWindow {
       cdp: (method, params) => this.cdp(method, params),
     });
     this.window.webContents.setFrameRate(frameRate());
-    screen.on("display-added", this.onDisplayChange);
-    screen.on("display-removed", this.onDisplayChange);
-    screen.on("display-metrics-changed", this.onDisplayChange);
     this.window.webContents.on("paint", (event, dirtyRect, image) => {
       const shmFrame = shmFrameOf(event);
-      if (!this.visible) {
+      if (!this.visible || this.destroyed) {
         event.texture?.release();
         shmFrame?.release();
         return;
@@ -119,6 +112,7 @@ export class DevtoolsWindow {
     });
     this.window.on("closed", () => {
       this.destroyed = true;
+      this.bitmaps.clear();
       this.surface.clear();
       onClosed();
     });
@@ -185,13 +179,14 @@ export class DevtoolsWindow {
   setVisible(visible: boolean) {
     if (this.visible === visible || this.destroyed) return;
     this.visible = visible;
+    this.window.webContents.setFrameRate(frameRate(visible));
     if (visible) {
       // one surface across every tab's inspector, so its pixels belong to whichever one drew last
       this.wholeSurfaceNext = true;
-      this.window.webContents.setFrameRate(frameRate());
       this.window.webContents.invalidate();
     } else {
-      this.window.webContents.setFrameRate(4);
+      this.bitmaps.clear();
+      this.wholeSurfaceNext = true;
     }
   }
 
@@ -213,9 +208,7 @@ export class DevtoolsWindow {
 
   close() {
     if (this.destroyed) return;
-    screen.off("display-added", this.onDisplayChange);
-    screen.off("display-removed", this.onDisplayChange);
-    screen.off("display-metrics-changed", this.onDisplayChange);
+    this.bitmaps.clear();
     if (!this.pageContents.isDestroyed()) this.pageContents.closeDevTools();
     this.window.destroy();
   }
