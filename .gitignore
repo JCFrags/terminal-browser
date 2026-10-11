@@ -6,6 +6,9 @@
 
 # Profiling and coverage output (engine dumps and devtools exports, any depth)
 profiles/
+# Scroll profiles are source code, not profiler output.
+!engine/crates/pixel-core/src/scroll/profiles/
+!engine/crates/pixel-core/src/scroll/profiles/*.rs
 *.profraw
 *.profdata
 /coverage/
