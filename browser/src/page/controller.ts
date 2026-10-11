@@ -1,7 +1,7 @@
 import { BrowserFrames } from "../agent/frames";
 import { BrowserUploads } from "../agent/uploads";
 import { registerDownloadSource, waitForDownloadStart, type BrowserDownloads } from "../agent/downloads";
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow } from "electron";
 import { BrowserDialogs } from "../agent/dialogs";
 import { BrowserCertificates } from "../agent/certificates";
 import type {
@@ -80,10 +80,6 @@ export class BrowserController {
   private emitHandlers = new Map<string, (data: unknown) => void>();
   private cdpEventHandlers = new Map<string, (params: unknown) => void>();
   private framePinned = false;
-  private readonly onDisplayChange = () => {
-    if (this.stopped) return;
-    this.applyFrameRate();
-  };
   private visible = true;
   private wholeSurfaceNext = true;
   private readonly bitmaps: BitmapPresenter;
@@ -194,16 +190,18 @@ export class BrowserController {
         return this.cdp(method, params);
       },
     });
-    this.window.webContents.setFrameRate(frameRate());
+    this.applyFrameRate();
     this.window.on("closed", this.onWindowClosed);
     this.window.webContents.on("will-navigate", (event, url) => {
       if (this.quitLink(url)) event.preventDefault();
     });
-    screen.on("display-added", this.onDisplayChange);
-    screen.on("display-removed", this.onDisplayChange);
-    screen.on("display-metrics-changed", this.onDisplayChange);
     this.window.webContents.on("paint", (event, dirtyRect, image) => {
       const shmFrame = shmFrameOf(event);
+      if (this.stopped || (!this.visible && !this.framePinned)) {
+        event.texture?.release();
+        shmFrame?.release();
+        return;
+      }
       const size = event.texture
         ? {
             width: event.texture.textureInfo.codedSize.width,
@@ -298,7 +296,7 @@ export class BrowserController {
   }
 
   selectPopup(popup: PopupWindow | null) {
-    for (const child of this.popups) child.setVisible(child === popup);
+    for (const child of this.popups) child.setVisible(child === popup && this.visible);
     this.selectedPopup = popup;
     this.onPopupChange?.();
   }
@@ -481,10 +479,17 @@ export class BrowserController {
     if (this.framePinned === pinned || this.stopped) return;
     this.framePinned = pinned;
     this.applyFrameRate();
+    if (pinned && !this.visible) this.invalidate();
   }
 
   private applyFrameRate() {
-    this.window.webContents.setFrameRate(this.visible || this.framePinned ? frameRate() : 4);
+    const rendering = this.visible || this.framePinned;
+    this.window.webContents.setFrameRate(frameRate(rendering));
+    if (!rendering) {
+      this.bitmaps.clear();
+      // Skipped damage must not be applied to the retained old surface on return.
+      this.wholeSurfaceNext = true;
+    }
   }
 
   runJs(source: string): Promise<unknown> {
@@ -743,9 +748,7 @@ export class BrowserController {
     this.dialogs.dispose();
     for (const popup of [...this.popups]) popup.destroy();
     this.devtools?.close();
-    screen.off("display-added", this.onDisplayChange);
-    screen.off("display-removed", this.onDisplayChange);
-    screen.off("display-metrics-changed", this.onDisplayChange);
+    this.bitmaps.clear();
     this.surface.close();
   }
 
@@ -764,7 +767,7 @@ export class BrowserController {
     this.popup?.setVisible(visible);
     this.devtools?.setVisible(visible);
     this.applyFrameRate();
-    if (visible) this.window.webContents.invalidate();
+    if (visible) this.invalidate();
   }
 
   private preloadArgv(): string[] {
@@ -889,6 +892,7 @@ export class BrowserController {
     };
     this.popup?.setVisible(false);
     this.popups.push(popup);
+    popup.setVisible(this.visible);
     this.selectedPopup = popup;
     this.onPopupCreated?.(popup, openerContentsId);
     this.onPopupChange?.();

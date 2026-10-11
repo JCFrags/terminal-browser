@@ -4,7 +4,7 @@ This repository maintains the Terminal Browser fork with pinned AgentCursor inte
 
 ## Read first
 
-Read `README.md`, `docs/development.md`, and `docs/installation.md`. This repository is the browser pnpm workspace root. Some imported documentation still names its former monorepo location while the standalone migration is in progress. Do not make changes in that former repository.
+Read `README.md`, `docs/development.md`, and `docs/installation.md`. This repository is the browser pnpm workspace root. `SOURCE.md` records the extraction. Do not make changes in the former monorepo or retained browser repositories for work assigned here.
 
 ## Development and verification
 

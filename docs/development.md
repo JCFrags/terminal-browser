@@ -4,27 +4,16 @@
 
 ## Source boundary
 
-Run browser commands from `vendor/terminal-browser`. Its pnpm workspace is
-separate from the parent repository's npm workspace. Copying or building source
-does not activate a Pi extension or replace an installed browser.
+Run browser commands from this repository's root pnpm workspace. Copying or
+building source does not activate a Pi extension or replace an installed browser.
 
-`copy-provenance.json` records the original import and maintained changes. In
-schema version 2, a new local file has `sourceSha256: null`: there was no imported
-source file to hash. Removed imported files retain their original hashes in the
-removal records. These records describe origin, not current runtime activation.
-Do not invent original hashes for new files. `upstreams.lock.json` separately
-pins external runtime inputs.
-
-After staging the intended browser changes, regenerate provenance from the parent
-repository root, inspect the resulting JSON, and stage it:
-
-```sh
-node scripts/update-browser-provenance.mjs
-git add vendor/terminal-browser/copy-provenance.json
-```
-
-The verifier supports locally added files with `sourceSha256: null` and retained
-hashes for removed imported files. Stage only intended changes before regeneration.
+[SOURCE.md](../SOURCE.md) records the exact standalone extraction. The retained
+`copy-provenance.json` is a frozen historical receipt from that source, not a
+manifest of subsequent changes. Its schema 2 `sourceSha256: null` means no imported
+source file existed. Removal records retain original hashes. Do not regenerate
+this receipt or invent original hashes. Git records new changes, and each release
+manifest records the current source-input digest and complete runtime inventory.
+`upstreams.lock.json` separately pins external runtime inputs.
 
 This copy includes the browser and pinned AgentCursor, not WebX search/read,
 research loaders, retirement tooling, or unrelated web services. Contributions
@@ -55,8 +44,8 @@ build does not supply either runtime prerequisite.
 
 UI tests that import `pixel-react` also need its native module. After the ignored-script install, run `CARGO_BUILD_JOBS=2 node engine/packages/pixel-react/scripts/build-native.mjs` before those tests. An absolute private `CARGO_TARGET_DIR` can retain the native cache. The script builds `pixel-node` and supplies the ignored `native/pixel.node`. Build the affected TypeScript first, then run the existing JavaScript test with `node --test`. A `tsx` loader is not needed.
 
-Use pnpm 10.13.1 and a compatible Node host. The repository browser-copy CI uses
-Node 24.18.0 on Ubuntu 22.04 and a Rust toolchain. Native builds need Cargo, a C/C++
+Use pnpm 10.13.1 and a compatible Node host. The workspace CI uses
+Node 24.18.0 on Ubuntu 24.04 and Rust 1.93.1. Native builds need Cargo, a C/C++
 linker toolchain, `pkg-config`, and the platform graphics/font development
 libraries used by the Rust renderer. Complete Linux artifact checks also need
 Python 3.11+, Bubblewrap, and an X11 test display for native Electron fixtures.
@@ -68,6 +57,38 @@ Electron remains pinned to **43.3.0** and AgentCursor to commit
 Electron archive checksums, AgentCursor, and the blocking engine/filter inputs.
 The legacy `agent-browser` input and bundle are removed. The native CLI is the
 agent control interface.
+
+## Native frame transport
+
+A matched, structured `unknown_method` reply for the retired `pane.graphics.info`
+or `pane.graphics.stream` method disables those probes for that terminal and
+socket identity. A replaced socket or new terminal resets the decision. Missing,
+malformed, rejected, and other transient replies retain the existing retry delay.
+The standard Kitty graphics path remains available without a Herdr fork.
+
+`TERMINAL_BROWSER_FRAME_DIR` is an explicit storage experiment, not a default
+optimization. **Privacy warning:** frame files contain raw RGBA page pixels.
+A disk-backed directory can add storage and copy-on-write work. Abrupt termination
+can leave files behind. Owner-only permissions are not encryption or secure erase.
+Use fixture content first. Do not use sensitive pages to evaluate this option.
+
+If testing it, provide an existing absolute directory owned by the current user,
+with no group/other permissions. A direct symlink root is rejected. Set the variable
+on the native CLI launch. New direct, split, and companion sessions carry the value;
+reused sessions keep their startup choice. Each terminal creates a fresh 0700 child
+and 0600 frame files. Invalid or occupied paths warn and retain the original
+temporary-directory behavior. Normal shutdown removes owned frame files and the
+empty child, not the caller's root or unrelated crash residue. No automatic cleanup
+or filesystem selection is performed.
+
+A synthetic Linux check established that bounded reflink cloning (copy-on-write
+file cloning) works between two files on the same btrfs filesystem, including a
+memory-mapped producer, and fails across tmpfs/btrfs. This establishes compatibility only,
+not reduced CPU use or end-to-end Herdr acceptance. Herdr 0.9.3's
+[native file path](https://github.com/herdrdev/herdr/blob/v0.9.3/src/server/headless/native_graphics.rs)
+also has a 16 MiB frame limit and its own disable/fallback lifecycle. This option
+does not change those limits, add a frame acknowledgement, or add another native
+presentation scheduler. Inspect the actual ingest filesystem before an experiment.
 
 ## Build a complete artifact
 
@@ -149,7 +170,7 @@ symlink or runtime dependency installation is needed for those packaged adapters
 
 `pnpm test:dist:ci` builds two fresh complete releases outside the checkout and
 runs the distribution, smoke, and recovery gates. Inspect its script and current
-workflow before treating it as a CI requirement. The repository's browser-copy
+workflow before treating it as a CI requirement. The repository's workspace
 job also builds, typechecks, and tests integration packages. Terminal-adapter
 baseline checks are not a substitute for packaged runtime acceptance.
 

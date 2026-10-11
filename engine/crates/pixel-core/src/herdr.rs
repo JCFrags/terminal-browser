@@ -25,6 +25,74 @@ impl HerdrTarget {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EndpointIdentity {
+    device: u64,
+    inode: u64,
+    changed: i64,
+    changed_ns: i64,
+}
+
+impl EndpointIdentity {
+    fn at(socket: &str) -> Option<Self> {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let metadata = std::fs::metadata(socket).ok()?;
+        metadata.file_type().is_socket().then(|| Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            changed: metadata.ctime(),
+            changed_ns: metadata.ctime_nsec(),
+        })
+    }
+}
+
+/// Capability absence belongs to this terminal and socket lifetime, not the process.
+#[derive(Default)]
+pub(crate) struct HerdrProbe {
+    unsupported: Option<EndpointIdentity>,
+}
+
+impl HerdrProbe {
+    pub(crate) fn open(&mut self, target: &HerdrTarget, instance: u64) -> Option<Herdr> {
+        let before = EndpointIdentity::at(&target.socket);
+        if before.is_some() && self.unsupported == before {
+            return None;
+        }
+        // A replaced or missing socket resets absence. A new terminal starts empty.
+        self.unsupported = None;
+        match Herdr::connect(&target.pane, &target.socket) {
+            Ok(mut herdr) => {
+                herdr.instance = instance;
+                Some(herdr)
+            }
+            Err(ConnectError::Unsupported) => {
+                let after = EndpointIdentity::at(&target.socket);
+                if before == after {
+                    self.unsupported = after;
+                }
+                crate::logging::info(
+                    "herdr",
+                    "legacy graphics API is unavailable; using standard Kitty graphics",
+                );
+                None
+            }
+            Err(ConnectError::Transient) => None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ConnectError {
+    Unsupported,
+    Transient,
+}
+
+impl From<io::Error> for ConnectError {
+    fn from(_: io::Error) -> Self {
+        Self::Transient
+    }
+}
+
 pub(crate) struct Herdr {
     frames: BufReader<UnixStream>,
     directory: PathBuf,
@@ -37,36 +105,33 @@ pub(crate) struct Herdr {
 }
 
 impl Herdr {
-    pub(crate) fn open(target: &HerdrTarget, instance: u64) -> Option<Self> {
-        let mut herdr = Self::connect(&target.pane, &target.socket)?;
-        herdr.instance = instance;
-        Some(herdr)
-    }
-
-    fn connect(pane: &str, socket: &str) -> Option<Self> {
+    fn connect(pane: &str, socket: &str) -> Result<Self, ConnectError> {
         let info = request(
             socket,
             &format!(
                 r#"{{"id":"info","method":"pane.graphics.info","params":{{"pane_id":{}}}}}"#,
                 quote(pane)
             ),
-        )
-        .ok()?;
-
-        if field_str(&info, "file_frame_transport")? != "direct-kitty" {
-            return None;
+        )?;
+        if unsupported_method(&info, "info") {
+            return Err(ConnectError::Unsupported);
         }
-        let directory = PathBuf::from(field_str(&info, "file_frame_directory")?);
+        if field_str(&info, "file_frame_transport").as_deref() != Some("direct-kitty") {
+            return Err(ConnectError::Transient);
+        }
+        let directory = PathBuf::from(
+            field_str(&info, "file_frame_directory").ok_or(ConnectError::Transient)?,
+        );
         let cell = (
-            field_u32(&info, "cell_width_px")?,
-            field_u32(&info, "cell_height_px")?,
+            field_u32(&info, "cell_width_px").ok_or(ConnectError::Transient)?,
+            field_u32(&info, "cell_height_px").ok_or(ConnectError::Transient)?,
         );
         if cell.0 == 0 || cell.1 == 0 {
-            return None;
+            return Err(ConnectError::Transient);
         }
 
-        let stream = UnixStream::connect(socket).ok()?;
-        stream.set_read_timeout(Some(OPEN_TIMEOUT)).ok()?;
+        let stream = UnixStream::connect(socket)?;
+        stream.set_read_timeout(Some(OPEN_TIMEOUT))?;
         let mut frames = BufReader::new(stream);
         write_line(
             frames.get_mut(),
@@ -75,15 +140,18 @@ impl Herdr {
                 // checkme: how does pane get here? 
                 quote(pane)
             ),
-        )
-        .ok()?;
-        if !accepted(&read_line(&mut frames).ok()?) {
-            return None;
+        )?;
+        let reply = read_line(&mut frames)?;
+        if unsupported_method(&reply, "stream") {
+            return Err(ConnectError::Unsupported);
         }
-        frames.get_ref().set_read_timeout(Some(ACK_TIMEOUT)).ok()?;
+        if !accepted(&reply) {
+            return Err(ConnectError::Transient);
+        }
+        frames.get_ref().set_read_timeout(Some(ACK_TIMEOUT))?;
 
         crate::logging::info("herdr", "frames go straight to herdr as files");
-        Some(Self {
+        Ok(Self {
             frames,
             directory,
             cell,
@@ -201,6 +269,19 @@ fn read_line(reader: &mut BufReader<UnixStream>) -> io::Result<String> {
     Ok(line)
 }
 
+fn unsupported_method(response: &str, request_id: &str) -> bool {
+    let Ok(response) = serde_json::from_str::<serde_json::Value>(response) else {
+        return false;
+    };
+    response.get("id").and_then(serde_json::Value::as_str) == Some(request_id)
+        && response.get("result").is_none()
+        && response
+            .get("error")
+            .and_then(|error| error.get("code"))
+            .and_then(serde_json::Value::as_str)
+            == Some("unknown_method")
+}
+
 fn accepted(response: &str) -> bool {
     response.contains(r#""result""#) && !response.contains(r#""error""#)
 }
@@ -296,6 +377,110 @@ mod tests {
         assert!(!accepted(
             r#"{"id":"stream","error":{"code":"feature_disabled","message":"nope"}}"#
         ));
+    }
+
+    const UNKNOWN_INFO: &str = r#"{"id":"info","error":{"code":"unknown_method","message":"retired"}}"#;
+    const UNKNOWN_STREAM: &str = r#"{"id":"stream","error":{"code":"unknown_method","message":"retired"}}"#;
+
+    #[test]
+    fn only_a_matching_structured_unknown_method_retires_the_probe() {
+        assert!(unsupported_method(UNKNOWN_INFO, "info"));
+        assert!(unsupported_method(UNKNOWN_STREAM, "stream"));
+        for reply in [
+            UNKNOWN_STREAM,
+            r#"{"id":"info","error":{"code":"feature_disabled"}}"#,
+            r#"{"id":"info","result":null,"error":{"code":"unknown_method"}}"#,
+            r#"{"id":"info","result":{"message":"unknown_method"}}"#,
+            r#"{"id":"info","error":"unknown_method"}"#,
+            r#"{"error":{"code":"unknown_method"}}"#,
+            r#"{"id":"other","error":{"code":"unknown_method"}}"#,
+            r#"{"id":"info","error":{"message":"unknown_method"}}"#,
+            r#"{"id":"info","error":{"code":"unknown_method"}"#,
+            r#""unknown_method""#,
+        ] {
+            assert!(!unsupported_method(reply, "info"), "{reply}");
+        }
+    }
+
+    fn answer(
+        listener: std::os::unix::net::UnixListener,
+        replies: &[&str],
+    ) -> std::thread::JoinHandle<std::os::unix::net::UnixListener> {
+        let replies: Vec<String> = replies.iter().map(|reply| reply.to_string()).collect();
+        std::thread::spawn(move || {
+            for reply in replies {
+                let (stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(OPEN_TIMEOUT)).unwrap();
+                let mut reader = BufReader::new(stream);
+                read_line(&mut reader).unwrap();
+                write_line(reader.get_mut(), &reply).unwrap();
+            }
+            listener
+        })
+    }
+
+    #[test]
+    fn unsupported_is_cached_for_one_terminal_and_socket_lifetime() {
+        use std::os::unix::net::UnixListener;
+        let dir = scratch("unsupported");
+        let socket = dir.join("herdr.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let target = HerdrTarget {
+            pane: "w1:p1".into(),
+            socket: socket.to_string_lossy().into_owned(),
+        };
+        let mut probe = HerdrProbe::default();
+        let server = answer(listener, &[UNKNOWN_INFO]);
+        assert!(probe.open(&target, 0).is_none());
+        let listener = server.join().unwrap();
+        assert_eq!(probe.unsupported, EndpointIdentity::at(&target.socket));
+        assert!(probe.unsupported.is_some());
+        assert!(probe.open(&target, 0).is_none());
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        listener.set_nonblocking(false).unwrap();
+
+        // A fresh terminal must query even while the old one caches absence.
+        let server = answer(listener, &[UNKNOWN_INFO]);
+        assert!(HerdrProbe::default().open(&target, 1).is_none());
+        let listener = server.join().unwrap();
+
+        // Keep the old listener alive so replacement cannot reuse its inode.
+        std::fs::remove_file(&socket).unwrap();
+        let (_socket, _frames) = fake_herdr(&dir, "direct-kitty");
+        assert_ne!(probe.unsupported, EndpointIdentity::at(&target.socket));
+        assert!(probe.open(&target, 0).is_some());
+        assert!(probe.unsupported.is_none());
+        drop(listener);
+    }
+
+    #[test]
+    fn transient_replies_retry_but_stream_retirement_is_cached() {
+        let dir = scratch("transient");
+        let socket = dir.join("herdr.sock");
+        let mut listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let target = HerdrTarget {
+            pane: "w1:p1".into(),
+            socket: socket.to_string_lossy().into_owned(),
+        };
+        let mut probe = HerdrProbe::default();
+        for reply in [
+            r#"{"id":"info","error":{"code":"feature_disabled"}}"#,
+            r#"{"id":"info","error":{"code":"unknown_method"}"#,
+            r#"{"id":"info","result":{"cell_width_px":0}}"#,
+        ] {
+            let server = answer(listener, &[reply]);
+            assert!(probe.open(&target, 0).is_none());
+            assert!(probe.unsupported.is_none());
+            listener = server.join().unwrap();
+        }
+        let server = answer(listener, &[INFO, UNKNOWN_STREAM]);
+        assert!(probe.open(&target, 0).is_none());
+        let listener = server.join().unwrap();
+        assert!(probe.unsupported.is_some());
+        assert!(probe.open(&target, 0).is_none());
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), io::ErrorKind::WouldBlock);
     }
 
     /// Answers like herdr does: one info reply per connection, then a stream
@@ -403,14 +588,20 @@ mod tests {
     fn a_terminal_without_file_frames_is_left_to_the_caller() {
         let dir = scratch("inline");
         let (socket, _frames) = fake_herdr(&dir, "");
-        assert!(Herdr::connect("w1:p1", &socket.to_string_lossy()).is_none());
+        assert!(matches!(
+            Herdr::connect("w1:p1", &socket.to_string_lossy()),
+            Err(ConnectError::Transient)
+        ));
     }
 
     #[test]
     fn nothing_listening_is_simply_not_herdr() {
         let dir = scratch("absent");
         let socket = dir.join("missing.sock");
-        assert!(Herdr::connect("w1:p1", &socket.to_string_lossy()).is_none());
+        assert!(matches!(
+            Herdr::connect("w1:p1", &socket.to_string_lossy()),
+            Err(ConnectError::Transient)
+        ));
     }
 
     #[test]

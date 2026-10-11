@@ -3,7 +3,7 @@
 [Product guide](../README.md) · [Development](development.md) · [Pi adapter](../pi-extension/README.md)
 
 Use reviewed artifacts from a `terminal-browser-vVERSION` release in
-`JCFrags/my-shtty-pi`. This is a separate product release namespace. Do not use
+`JCFrags/terminal-browser`. Do not use
 an upstream curl installer, Homebrew package, or `terminal-browser upgrade`.
 The latter is disabled for managed installations.
 

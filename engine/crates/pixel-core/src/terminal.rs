@@ -237,8 +237,11 @@ pub struct Terminal {
     transport: FrameTransport,
     herdr: Option<crate::herdr::Herdr>,
     herdr_target: Option<crate::herdr::HerdrTarget>,
+    herdr_probe: crate::herdr::HerdrProbe,
     herdr_retry: Option<(Instant, Duration)>,
     frame_files: Vec<FrameFile>,
+    // Fields drop in order: remove frame files before their private directory.
+    frame_directory: FrameDirectory,
     frame_seq: u64,
     wrapper: Wrapper,
     image_id: u32,
@@ -362,6 +365,7 @@ impl Terminal {
         )?; // enable many reporting modes so we get info about mouse/keyboard
         io.out().flush()?;
 
+        let terminal_id = NEXT_TERMINAL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut terminal = Self {
             io,
             saved,
@@ -375,8 +379,10 @@ impl Terminal {
             transport: FrameTransport::Inline,
             herdr: None,
             herdr_target: crate::herdr::HerdrTarget::from_env(&env),
+            herdr_probe: crate::herdr::HerdrProbe::default(),
             herdr_retry: None,
             frame_files: Vec::new(),
+            frame_directory: FrameDirectory::from_env(&env, terminal_id),
             frame_seq: 0,
             wrapper,
             image_id: frame_image_id(wrapper.relayed()),
@@ -384,7 +390,7 @@ impl Terminal {
             wake_rx: None,
             waker: None,
             resize_slot: None,
-            terminal_id: NEXT_TERMINAL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            terminal_id,
             clipboard_data: false,
             clip_read: None,
             color_scheme_updates: false,
@@ -511,7 +517,7 @@ impl Terminal {
     }
 
     fn frame_path(&self, slot: u64, generation: u64) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
+        self.frame_directory.path.join(format!(
             "terminal-browser-{}-{}-{generation}-{slot}.rgba",
             std::process::id(),
             self.terminal_id
@@ -554,7 +560,7 @@ impl Terminal {
         self.herdr = self
             .herdr_target
             .as_ref()
-            .and_then(|target| crate::herdr::Herdr::open(target, self.terminal_id));
+            .and_then(|target| self.herdr_probe.open(target, self.terminal_id));
         if let Some(cell) = self.herdr.as_ref().map(crate::herdr::Herdr::cell) {
             self.cell = Some(cell);
         }
@@ -1150,6 +1156,55 @@ fn parse_probe_reply(buf: &[u8], needle: &[u8]) -> Option<bool> {
         return None;
     }
     Some(rest.starts_with(b"OK"))
+}
+
+struct FrameDirectory {
+    path: std::path::PathBuf,
+    private: bool,
+}
+
+impl FrameDirectory {
+    fn from_env(env: &SessionEnv, terminal_id: u64) -> Self {
+        if let Some(root) = env.var("TERMINAL_BROWSER_FRAME_DIR") {
+            match Self::private(std::path::Path::new(&root), terminal_id) {
+                Ok(directory) => {
+                    crate::logging::info("terminal", "using an opt-in private frame directory");
+                    return directory;
+                }
+                Err(_) => crate::logging::warn(
+                    "terminal",
+                    "TERMINAL_BROWSER_FRAME_DIR needs an existing absolute owner-only directory; \
+                     could not create private frames there, using the temporary directory",
+                ),
+            }
+        }
+        Self { path: std::env::temp_dir(), private: false }
+    }
+
+    fn private(root: &std::path::Path, terminal_id: u64) -> io::Result<Self> {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let metadata = std::fs::symlink_metadata(root)?;
+        if !root.is_absolute()
+            || !metadata.is_dir()
+            || metadata.uid() != rustix::process::geteuid().as_raw()
+            || metadata.mode() & 0o077 != 0
+        {
+            return Err(io::Error::other("frame directory must be absolute, owned and private"));
+        }
+        let path = root.join(format!("terminal-browser-{}-{terminal_id}", std::process::id()));
+        // Do not reuse a directory left by another instance or an interrupted run.
+        std::fs::DirBuilder::new().mode(0o700).create(&path)?;
+        Ok(Self { path, private: true })
+    }
+}
+
+impl Drop for FrameDirectory {
+    fn drop(&mut self) {
+        if self.private {
+            // Remove only our empty child, never the configured root or crash residue.
+            let _ = std::fs::remove_dir(&self.path);
+        }
+    }
 }
 
 #[allow(unsafe_code)]
@@ -1954,6 +2009,57 @@ mod tests {
     }
 
     #[test]
+    fn frame_directory_is_explicit_private_and_scoped() {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let root = std::env::temp_dir().join(format!("tb-frame-dir-{}", std::process::id()));
+        std::fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let empty = SessionEnv::of_session(Default::default());
+        let default = FrameDirectory::from_env(&empty, 0);
+        assert_eq!(default.path, std::env::temp_dir());
+        assert!(!default.private);
+
+        let env = SessionEnv::of_session(std::collections::HashMap::from([
+            ("TERMINAL_BROWSER_FRAME_DIR".into(), root.to_string_lossy().into_owned()),
+        ]));
+        let directory = FrameDirectory::from_env(&env, 0);
+        let other = FrameDirectory::from_env(&env, 1);
+        assert!(directory.private);
+        assert_eq!(directory.path.parent(), Some(root.as_path()));
+        assert_ne!(directory.path, other.path);
+        assert_eq!(std::fs::metadata(&directory.path).unwrap().mode() & 0o777, 0o700);
+        // Refuse a stale or occupied child rather than deleting its contents.
+        assert!(!FrameDirectory::from_env(&env, 0).private);
+        let child = directory.path.clone();
+        let mut frame = FrameFile::create(child.join("synthetic.rgba"), 16).unwrap();
+        frame.write(&[7; 16]);
+        assert_eq!(std::fs::read(frame.path()).unwrap(), [7; 16]);
+        assert_eq!(std::fs::metadata(frame.path()).unwrap().mode() & 0o777, 0o600);
+        drop(frame);
+        drop(directory);
+        drop(other);
+        assert!(!child.exists());
+        assert!(root.exists(), "the configured root belongs to the caller");
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn frame_directory_rejects_public_relative_missing_and_symlink_roots() {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let root = std::env::temp_dir().join(format!("tb-unsafe-dir-{}", std::process::id()));
+        std::fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(FrameDirectory::private(&root, 0).is_err());
+        assert!(FrameDirectory::private(std::path::Path::new("."), 0).is_err());
+        assert!(FrameDirectory::private(&root.join("missing"), 0).is_err());
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = root.with_extension("link");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(FrameDirectory::private(&link, 0).is_err());
+        std::fs::remove_file(link).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     #[allow(unsafe_code)]
     fn shm_roundtrip() {
         let name = format!("/px-test-{}", std::process::id());
@@ -2487,6 +2593,68 @@ mod tests {
 #[cfg(test)]
 mod tty_tests {
     use super::*;
+
+    #[test]
+    fn retired_herdr_api_keeps_standard_kitty_file_drawing() {
+        use std::io::{BufRead as _, Read as _, Write as _};
+        let root = std::env::temp_dir().join(format!("tb-kitty-fallback-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let socket = root.join("herdr.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut reader = std::io::BufReader::new(stream);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            assert!(request.contains("pane.graphics.info"));
+            reader.get_mut().write_all(
+                b"{\"id\":\"info\",\"error\":{\"code\":\"unknown_method\"}}\n",
+            ).unwrap();
+        });
+        let (mut master, _slave, path) = open_pty();
+        let emulator = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            let mut replied = false;
+            let mut byte = [0u8; 1];
+            while master.read_exact(&mut byte).is_ok() {
+                seen.push(byte[0]);
+                if !replied && seen.ends_with(b"\x1b\\")
+                    && seen.windows(b"Gi=300,a=q".len()).any(|w| w == b"Gi=300,a=q")
+                {
+                    master.write_all(b"\x1b_Gi=300;OK\x1b\\").unwrap();
+                    replied = true;
+                }
+                if seen.ends_with(b"\x1b[?1049l") {
+                    break;
+                }
+            }
+            seen
+        });
+        let env = SessionEnv::of_session(std::collections::HashMap::from([
+            ("HERDR_PANE_ID".into(), "w1:p1".into()),
+            ("HERDR_SOCKET_PATH".into(), socket.to_string_lossy().into_owned()),
+        ]));
+        let mut term = Terminal::open(&path, Wrapper::None, env).unwrap();
+        server.join().unwrap();
+        assert!(term.herdr.is_none());
+        assert!(matches!(term.transport, FrameTransport::File));
+        let canvas = Canvas::new(2, 2);
+        for _ in 0..2 {
+            term.herdr_retry = Some((Instant::now(), HERDR_RETRY_MAX));
+            assert!(term.draw(&canvas).unwrap() > 0);
+            assert!(term.herdr.is_none());
+        }
+        let file = term.frame_files[0].path().to_owned();
+        assert_eq!(std::fs::read(&file).unwrap(), canvas.pixels);
+        drop(term);
+        let output = emulator.join().unwrap();
+        assert!(output.windows(b"a=T,f=32,s=2,v=2,t=f".len())
+            .any(|w| w == b"a=T,f=32,s=2,v=2,t=f"));
+        assert!(!file.exists());
+        std::fs::remove_file(socket).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn mouse_coordinates_match_the_negotiated_format() {

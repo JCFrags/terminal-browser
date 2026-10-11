@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 rayon = "1"
+serde_json = "1"
 rustix = { workspace = true }
 libc = { workspace = true }
 base64 = { workspace = true }

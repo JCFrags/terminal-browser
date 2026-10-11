@@ -261,10 +261,11 @@ export function paneOpenArgs(owner: BrowserOwner, options: CompanionOpenOptions,
     "--target-pane", owner.paneId,
     "--direction", "right",
   ];
-  const childEnvironment = {
+  const childEnvironment: NodeJS.ProcessEnv = {
     ...browserOwnerEnvironment(owner),
     ...piOriginEnvironment(environment),
     ...(startup ? startupEnvironment(startup) : {}),
+    TERMINAL_BROWSER_FRAME_DIR: environment.TERMINAL_BROWSER_FRAME_DIR,
   };
   if (options.url) childEnvironment.TERMINAL_BROWSER_COMPANION_URL = options.url;
   for (const [name, value] of Object.entries(childEnvironment)) {

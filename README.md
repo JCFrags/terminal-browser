@@ -4,7 +4,7 @@ A Chromium browser displayed in a terminal, with a native CLI for human users,
 Pi, and other agents. Agent input uses the pinned AgentCursor driver. Pi tools and
 Herdr pane management are optional adapters. Neither is required for CLI use.
 
-This is the maintained browser copy in `JCFrags/my-shtty-pi`, not the upstream
+This is the maintained fork in `JCFrags/terminal-browser`, not the upstream
 terminal-browser distribution. Do not use an upstream curl installer, Homebrew
 package, or `upgrade` to update this installation.
 
@@ -157,6 +157,30 @@ Use installer opt-ins only when those host integrations are wanted.
 | Display scale | Scale is selected at startup. Moving a browser between mixed-DPI monitors was not established by the fixture checks. Pause and preserve transient work before a needed restart. |
 | Host dependencies | The artifact contains patched Electron, its native rendering module, and runtime assets. Linux system libraries remain required. The installer needs Node and Python. Optional Pi and Herdr are separate host applications. |
 
+### Rendering policy
+
+Pages use a deterministic 60 FPS ceiling instead of the fastest connected monitor.
+Set `TERMINAL_BROWSER_FPS` before a fresh daemon starts to override it. Positive
+finite values are rounded and clamped to 1–240. Actual frame delivery can be lower than the cap.
+Unselected, unpinned browser tabs use at most 4 FPS, never above the normal cap.
+They discard terminal-surface paint while preserving page, timer, and network
+lifetime. Capture remains available. Recording pins retain normal rendering, and
+showing or pinning a hidden page requests a full repaint.
+
+Browser-tab visibility is not Herdr pane visibility. Herdr 0.9.3's
+[public session snapshot](https://github.com/herdrdev/herdr/blob/v0.9.3/src/api/schema/session.rs)
+does not expose each attached client's pane view. The browser does not
+use global focus as a hidden-state signal. Moving the whole browser to a hidden
+Herdr workspace can therefore still generate frames. No Herdr fork is required
+or supplied, and no general CPU reduction is claimed without a measured workload.
+
+Definitive retired Herdr graphics methods are probed once per terminal/socket
+lifetime. Transient failures still retry, and standard Kitty graphics remains
+available. The optional `TERMINAL_BROWSER_FRAME_DIR` can place native frame files
+on a chosen filesystem. It is disabled by default and can write raw page pixels
+to disk. Read the [transport limits and privacy warning](docs/development.md#native-frame-transport)
+before using it.
+
 Run `terminal-browser doctor --json` for read-only identity, selection, process,
 profile-lock, and graphics diagnostics. Unknown is not absent. Do not delete an
 uncertain lock/socket, replay a failed mutation, or replace a shared daemon as an
@@ -164,16 +188,17 @@ automatic repair.
 
 ## Source, verification, and releases
 
-Build and test in this directory's separate pnpm workspace, not the root npm
-workspace. Read the [development and release guide](docs/development.md) for native
-prerequisites, pinned inputs, complete artifacts, and test limits. Product release
-tags use `terminal-browser-vVERSION`, separate from the parent repository's tags.
-No claim is made that a source tag has a published artifact until that artifact
-and its manifest are available.
+Build and test from this repository's root pnpm workspace. Read the
+[development and release guide](docs/development.md) for native prerequisites,
+pinned inputs, complete artifacts, and test limits. Product release tags use
+`terminal-browser-vVERSION`. No claim is made that a source tag has a published
+artifact until that artifact and its manifest are available.
 
-This copy originated from `JCFrags/my-shtty-pi-web` and retains its browser,
-AgentCursor integration, Rust renderer, CLI, optional adapters, assets, and tests.
-[Copy provenance](copy-provenance.json) records the import and maintained changes.
+This fork retains the browser, AgentCursor integration, Rust renderer, CLI,
+optional adapters, assets, and tests from the previously maintained component.
+[Source lineage](SOURCE.md) records its extraction from `JCFrags/my-shtty-pi` and
+the earlier `JCFrags/my-shtty-pi-web` import. [Copy provenance](copy-provenance.json)
+is the frozen historical import receipt, not a current-tree manifest.
 [Upstream pins](upstreams.lock.json) record external runtime inputs. WebX search/read,
 research loaders, and unrelated web services are not part of this browser.
 

@@ -52,7 +52,9 @@ test("exact owner selection prevents cross-agent routing", () => {
 test("pane launch passes complete owner metadata, startup correlation and exact placement", () => {
   const startup = { attempt: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", file: "/tmp/not-used" };
   const rawOrigin = JSON.stringify(origin, null, 1);
-  const args = paneOpenArgs(ownerA, { url: "file:///tmp/a.html", focus: false }, startup, { [PI_ORIGIN_ENV]: rawOrigin });
+  const args = paneOpenArgs(ownerA, { url: "file:///tmp/a.html", focus: false }, startup, {
+    [PI_ORIGIN_ENV]: rawOrigin, TERMINAL_BROWSER_FRAME_DIR: "/tmp/private frames", UNRELATED_CANARY: "not-forwarded",
+  });
   assert.deepEqual(args.slice(0, 12), [
     "plugin", "pane", "open", "--plugin", "zenbu-labs.terminal-browser",
     "--entrypoint", "companion", "--placement", "split",
@@ -66,6 +68,9 @@ test("pane launch passes complete owner metadata, startup correlation and exact 
   assert.equal(args.includes(`TERMINAL_BROWSER_STARTUP_ATTEMPT=${startup.attempt}`), true);
   assert.equal(args.at(-1), "--no-focus");
   assert.equal(args.includes(`${PI_ORIGIN_ENV}=${rawOrigin}`), true);
+  assert.equal(args.includes("TERMINAL_BROWSER_FRAME_DIR=/tmp/private frames"), true);
+  assert.equal(args.some(arg => arg.includes("UNRELATED_CANARY")), false);
+  assert.equal(paneOpenArgs(ownerA, {}, startup, {}).some(arg => arg.startsWith("TERMINAL_BROWSER_FRAME_DIR=")), false);
   assert.equal(paneOpenArgs(ownerA, {}, startup, { [PI_ORIGIN_ENV]: "invalid" }).some(arg => arg.startsWith(`${PI_ORIGIN_ENV}=`)), false);
   const bind = parseCompanionSessionArgs(["receiver", "bind", "--receiver-kind", "pi", "--receiver-session", "pi-a", "--receiver-generation", origin.generation, "--suspend-automatic"]);
   assert.equal(bind.request.suspendAutomatic, true);

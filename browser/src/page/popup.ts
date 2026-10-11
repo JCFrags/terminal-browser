@@ -214,7 +214,9 @@ export class PopupWindow implements AgentBrowserTarget {
       deviceScaleFactor: renderScale,
       mobile: false,
     });
-    await this.cdp("Page.startScreencast", this.screencastParams());
+    if (this.visible && !this.destroyed) {
+      await this.cdp("Page.startScreencast", this.screencastParams());
+    }
   }
 
   focus(): Promise<void> | undefined {

@@ -99,7 +99,7 @@ Sets up configuration to make terminal-browser work best, this includes:
     usage: "terminal-browser upgrade",
     body: `
 This maintained copy refuses upstream upgrade. Stage and activate a reviewed
-JCFrags/my-shtty-pi artifact with its retained installer. Activation selects the
+JCFrags/terminal-browser artifact with its retained installer. Activation selects the
 next launch, not a running process. Preserve the original failure evidence and
 rollback release. Do not replace a shared daemon without explicit approval.
 `,

@@ -160,6 +160,10 @@ export class BitmapPresenter {
     return true;
   }
 
+  clear(): void {
+    this.pending = null;
+  }
+
   private drain(): void {
     this.scheduled = false;
     const pending = this.pending;
