@@ -160,18 +160,26 @@ Use installer opt-ins only when those host integrations are wanted.
 ### Rendering policy
 
 Pages use a deterministic 60 FPS ceiling instead of the fastest connected monitor.
-Set `TERMINAL_BROWSER_FPS` before launch to override it. Positive finite values
-are rounded and clamped to 1–240. Actual frame delivery can be lower than the cap.
+Set `TERMINAL_BROWSER_FPS` before a fresh daemon starts to override it. Positive
+finite values are rounded and clamped to 1–240. Actual frame delivery can be lower than the cap.
 Unselected, unpinned browser tabs use at most 4 FPS, never above the normal cap.
 They discard terminal-surface paint while preserving page, timer, and network
 lifetime. Capture remains available. Recording pins retain normal rendering, and
 showing or pinning a hidden page requests a full repaint.
 
-Browser-tab visibility is not Herdr pane visibility. Herdr 0.9.3's public session
-snapshot does not expose each attached client's pane view. The browser does not
+Browser-tab visibility is not Herdr pane visibility. Herdr 0.9.3's
+[public session snapshot](https://github.com/herdrdev/herdr/blob/v0.9.3/src/api/schema/session.rs)
+does not expose each attached client's pane view. The browser does not
 use global focus as a hidden-state signal. Moving the whole browser to a hidden
 Herdr workspace can therefore still generate frames. No Herdr fork is required
 or supplied, and no general CPU reduction is claimed without a measured workload.
+
+Definitive retired Herdr graphics methods are probed once per terminal/socket
+lifetime. Transient failures still retry, and standard Kitty graphics remains
+available. The optional `TERMINAL_BROWSER_FRAME_DIR` can place native frame files
+on a chosen filesystem. It is disabled by default and can write raw page pixels
+to disk. Read the [transport limits and privacy warning](docs/development.md#native-frame-transport)
+before using it.
 
 Run `terminal-browser doctor --json` for read-only identity, selection, process,
 profile-lock, and graphics diagnostics. Unknown is not absent. Do not delete an

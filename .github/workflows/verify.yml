@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   workspace:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: 2
@@ -37,6 +37,8 @@ jobs:
       - name: Test integration packages
         run: pnpm --filter terminal-browser --filter terminal-browser-cli --filter pixel-store --filter pi-terminal-browser run test
       - name: Test native terminal transport
-        run: cargo test --release --locked --manifest-path engine/Cargo.toml -p pixel-core terminal::tty_tests
+        run: |
+          cargo test --release --locked --manifest-path engine/Cargo.toml -p pixel-core herdr::tests
+          cargo test --release --locked --manifest-path engine/Cargo.toml -p pixel-core terminal::
       - name: Test managed distribution contracts
         run: pnpm test:dist

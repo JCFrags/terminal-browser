@@ -45,7 +45,7 @@ build does not supply either runtime prerequisite.
 UI tests that import `pixel-react` also need its native module. After the ignored-script install, run `CARGO_BUILD_JOBS=2 node engine/packages/pixel-react/scripts/build-native.mjs` before those tests. An absolute private `CARGO_TARGET_DIR` can retain the native cache. The script builds `pixel-node` and supplies the ignored `native/pixel.node`. Build the affected TypeScript first, then run the existing JavaScript test with `node --test`. A `tsx` loader is not needed.
 
 Use pnpm 10.13.1 and a compatible Node host. The workspace CI uses
-Node 24.18.0 on Ubuntu 22.04 and Rust 1.93.1. Native builds need Cargo, a C/C++
+Node 24.18.0 on Ubuntu 24.04 and Rust 1.93.1. Native builds need Cargo, a C/C++
 linker toolchain, `pkg-config`, and the platform graphics/font development
 libraries used by the Rust renderer. Complete Linux artifact checks also need
 Python 3.11+, Bubblewrap, and an X11 test display for native Electron fixtures.
@@ -57,6 +57,38 @@ Electron remains pinned to **43.3.0** and AgentCursor to commit
 Electron archive checksums, AgentCursor, and the blocking engine/filter inputs.
 The legacy `agent-browser` input and bundle are removed. The native CLI is the
 agent control interface.
+
+## Native frame transport
+
+A matched, structured `unknown_method` reply for the retired `pane.graphics.info`
+or `pane.graphics.stream` method disables those probes for that terminal and
+socket identity. A replaced socket or new terminal resets the decision. Missing,
+malformed, rejected, and other transient replies retain the existing retry delay.
+The standard Kitty graphics path remains available without a Herdr fork.
+
+`TERMINAL_BROWSER_FRAME_DIR` is an explicit storage experiment, not a default
+optimization. **Privacy warning:** frame files contain raw RGBA page pixels.
+A disk-backed directory can add storage and copy-on-write work. Abrupt termination
+can leave files behind. Owner-only permissions are not encryption or secure erase.
+Use fixture content first. Do not use sensitive pages to evaluate this option.
+
+If testing it, provide an existing absolute directory owned by the current user,
+with no group/other permissions. A direct symlink root is rejected. Set the variable
+on the native CLI launch. New direct, split, and companion sessions carry the value;
+reused sessions keep their startup choice. Each terminal creates a fresh 0700 child
+and 0600 frame files. Invalid or occupied paths warn and retain the original
+temporary-directory behavior. Normal shutdown removes owned frame files and the
+empty child, not the caller's root or unrelated crash residue. No automatic cleanup
+or filesystem selection is performed.
+
+A synthetic Linux check established that bounded reflink cloning (copy-on-write
+file cloning) works between two files on the same btrfs filesystem, including a
+memory-mapped producer, and fails across tmpfs/btrfs. This establishes compatibility only,
+not reduced CPU use or end-to-end Herdr acceptance. Herdr 0.9.3's
+[native file path](https://github.com/herdrdev/herdr/blob/v0.9.3/src/server/headless/native_graphics.rs)
+also has a 16 MiB frame limit and its own disable/fallback lifecycle. This option
+does not change those limits, add a frame acknowledgement, or add another native
+presentation scheduler. Inspect the actual ingest filesystem before an experiment.
 
 ## Build a complete artifact
 

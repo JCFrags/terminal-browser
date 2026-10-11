@@ -482,7 +482,10 @@ async function launchInSplit(
       const opened = await terminal.split!({
         from,
         direction,
-        command: clientLaunchCommand(argv, { ...browserOwnerEnvironmentIfPresent(), ...piOriginEnvironment(process.env), ...startupEnvironment(startup) }),
+        command: clientLaunchCommand(argv, {
+          ...browserOwnerEnvironmentIfPresent(), ...piOriginEnvironment(process.env), ...startupEnvironment(startup),
+          TERMINAL_BROWSER_FRAME_DIR: process.env.TERMINAL_BROWSER_FRAME_DIR,
+        }),
         size: size ?? null,
         tty: ownTtyPath() ?? callerTty().path,
         onPaneCreated: (created) => {
