@@ -1,0 +1,22 @@
+{
+  "name": "terminal-graphics-engine",
+  "version": "0.2.3",
+  "description": "CLI-first terminal browser with native AgentCursor control and optional agent integrations",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "browser": "pnpm --filter terminal-browser start",
+    "build:dist": "scripts/release.sh",
+    "install:dist": "scripts/install-local.sh",
+    "test:dist": "node --test scripts/test/*.test.mjs",
+    "test:dist:smoke": "node scripts/test/smoke-dist.mjs",
+    "test:dist:recovery": "node scripts/test/recovery-dist.mjs",
+    "test:dist:ci": "bash scripts/test/ci-dist.sh",
+    "dist": "pnpm build:dist && pnpm install:dist"
+  },
+  "packageManager": "pnpm@10.13.1",
+  "devDependencies": {
+    "@electron/osx-sign": "^1.3.3",
+    "esbuild": "^0.25.0"
+  }
+}
