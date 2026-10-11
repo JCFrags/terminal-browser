@@ -57,6 +57,7 @@ exec "$root/bin/terminal-browser" "$@"
 EOF
 cp "$ROOT/scripts/apparmor.sh" "$ROOT/scripts/dist-manifest.mjs" "$ROOT/scripts/install-manager.mjs" "$ROOT/scripts/extract-dist.py" "$ROOT/scripts/install.sh" "$ROOT/scripts/install-local.sh" "$STAGE/scripts/"
 cp "$ROOT/LICENSE" "$STAGE/LICENSE"
+cp "$ROOT/SOURCE.md" "$STAGE/metadata/standalone-source.md"
 cp "$ROOT/pnpm-lock.yaml" "$ROOT/upstreams.lock.json" "$ROOT/copy-provenance.json" "$STAGE/metadata/"
 cp "$ROOT/engine/Cargo.lock" "$STAGE/metadata/Cargo.lock"
 env -i PATH="$PATH" HOME="$WORK/build-home" XDG_CONFIG_HOME="$WORK/build-home/config" XDG_DATA_HOME="$WORK/build-home/data" XDG_STATE_HOME="$WORK/build-home/state" XDG_CACHE_HOME="$WORK/build-home/cache" XDG_RUNTIME_DIR="$WORK/build-home/runtime" TERMINAL_BROWSER_APPDATA="$WORK/build-home/appdata" TERMINAL_BROWSER_INTEROP_DIR="$WORK/build-home/interop" PI_CODING_AGENT_DIR="$WORK/build-home/pi" TERMINAL_BROWSER_SKILL_OUT="$STAGE/skills" "$ROOT/scripts/generate-skill.sh"

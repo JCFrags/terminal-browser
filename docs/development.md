@@ -4,27 +4,16 @@
 
 ## Source boundary
 
-Run browser commands from `vendor/terminal-browser`. Its pnpm workspace is
-separate from the parent repository's npm workspace. Copying or building source
-does not activate a Pi extension or replace an installed browser.
+Run browser commands from this repository's root pnpm workspace. Copying or
+building source does not activate a Pi extension or replace an installed browser.
 
-`copy-provenance.json` records the original import and maintained changes. In
-schema version 2, a new local file has `sourceSha256: null`: there was no imported
-source file to hash. Removed imported files retain their original hashes in the
-removal records. These records describe origin, not current runtime activation.
-Do not invent original hashes for new files. `upstreams.lock.json` separately
-pins external runtime inputs.
-
-After staging the intended browser changes, regenerate provenance from the parent
-repository root, inspect the resulting JSON, and stage it:
-
-```sh
-node scripts/update-browser-provenance.mjs
-git add vendor/terminal-browser/copy-provenance.json
-```
-
-The verifier supports locally added files with `sourceSha256: null` and retained
-hashes for removed imported files. Stage only intended changes before regeneration.
+[SOURCE.md](../SOURCE.md) records the exact standalone extraction. The retained
+`copy-provenance.json` is a frozen historical receipt from that source, not a
+manifest of subsequent changes. Its schema 2 `sourceSha256: null` means no imported
+source file existed. Removal records retain original hashes. Do not regenerate
+this receipt or invent original hashes. Git records new changes, and each release
+manifest records the current source-input digest and complete runtime inventory.
+`upstreams.lock.json` separately pins external runtime inputs.
 
 This copy includes the browser and pinned AgentCursor, not WebX search/read,
 research loaders, retirement tooling, or unrelated web services. Contributions
@@ -55,8 +44,8 @@ build does not supply either runtime prerequisite.
 
 UI tests that import `pixel-react` also need its native module. After the ignored-script install, run `CARGO_BUILD_JOBS=2 node engine/packages/pixel-react/scripts/build-native.mjs` before those tests. An absolute private `CARGO_TARGET_DIR` can retain the native cache. The script builds `pixel-node` and supplies the ignored `native/pixel.node`. Build the affected TypeScript first, then run the existing JavaScript test with `node --test`. A `tsx` loader is not needed.
 
-Use pnpm 10.13.1 and a compatible Node host. The repository browser-copy CI uses
-Node 24.18.0 on Ubuntu 22.04 and a Rust toolchain. Native builds need Cargo, a C/C++
+Use pnpm 10.13.1 and a compatible Node host. The workspace CI uses
+Node 24.18.0 on Ubuntu 22.04 and Rust 1.93.1. Native builds need Cargo, a C/C++
 linker toolchain, `pkg-config`, and the platform graphics/font development
 libraries used by the Rust renderer. Complete Linux artifact checks also need
 Python 3.11+, Bubblewrap, and an X11 test display for native Electron fixtures.
@@ -149,7 +138,7 @@ symlink or runtime dependency installation is needed for those packaged adapters
 
 `pnpm test:dist:ci` builds two fresh complete releases outside the checkout and
 runs the distribution, smoke, and recovery gates. Inspect its script and current
-workflow before treating it as a CI requirement. The repository's browser-copy
+workflow before treating it as a CI requirement. The repository's workspace
 job also builds, typechecks, and tests integration packages. Terminal-adapter
 baseline checks are not a substitute for packaged runtime acceptance.
 
